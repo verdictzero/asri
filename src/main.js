@@ -24,6 +24,14 @@ const AXIAL_TILT = MathUtils.degToRad(23.4)
 // this leaves it just above the surface.
 const MIN_DISTANCE = 1.12
 
+// OrbitControls damps rotation and panning, but applies zoom in a single
+// step and clears it, so every wheel notch lands as a jump. The drawn
+// distance eases toward the distance the controls are holding instead. This
+// is the fraction of the remaining gap closed per sixtieth of a second; the
+// easing is worked out from elapsed time rather than per frame, so it takes
+// the same moment whatever rate the machine is drawing at.
+const ZOOM_EASE = 0.16
+
 const MAX_PIXEL_RATIO = 2
 
 // Ceiling on the drawing buffer, in pixels. Past this the cost is all fill
@@ -38,7 +46,9 @@ const MAX_DRAWING_BUFFER_PIXELS = 6.5e6
 // any fixed guess about what a GPU can manage.
 const SLOW_FRAME_MS = 42
 const FAST_FRAME_MS = 20
-const SLOW_FRAMES_BEFORE_BACKING_OFF = 12
+// Roughly a second of sustained slowness, so a single hitch during a drag
+// does not drop the resolution.
+const SLOW_FRAMES_BEFORE_BACKING_OFF = 30
 const FAST_FRAMES_BEFORE_RECOVERING = 90
 const MIN_QUALITY = 0.45
 const QUALITY_STEP = 0.72
@@ -111,6 +121,32 @@ function main() {
     spinning = false
   })
 
+  // The distance the controls believe in, and the one actually drawn.
+  let zoomTarget = camera.position.length()
+  let zoomShown = zoomTarget
+
+  // The controls dolly from wherever the camera currently is, including from
+  // inside their own wheel handler, which runs between our frames. So the
+  // camera is left at the distance they expect and only moved to the eased
+  // distance for the moment it takes to draw.
+  let easedAt = 0
+
+  function updateControls() {
+    const moved = controls.update()
+    zoomTarget = camera.position.length()
+
+    const now = performance.now()
+    // Capped so a backgrounded tab does not resume with one enormous step.
+    const elapsed = easedAt === 0 ? 1 / 60 : Math.min(0.25, (now - easedAt) / 1000)
+    easedAt = now
+
+    const previous = zoomShown
+    zoomShown += (zoomTarget - zoomShown) * (1 - Math.pow(1 - ZOOM_EASE, elapsed * 60))
+    if (Math.abs(zoomTarget - zoomShown) < zoomTarget * 5e-4) zoomShown = zoomTarget
+
+    return moved || zoomShown !== previous
+  }
+
   function fitDistance() {
     // Pull the camera back far enough for the globe to fit whichever frustum
     // dimension is tighter, so portrait viewports work too.
@@ -143,11 +179,17 @@ function main() {
     controls.maxDistance = fit
     if (!framed) {
       camera.position.set(0, 0, fit)
+      zoomTarget = fit
+      zoomShown = fit
       framed = true
+    } else {
+      // A narrower viewport can pull the zoom-out limit in past where the
+      // camera already is.
+      zoomTarget = Math.min(zoomTarget, fit)
     }
 
     camera.updateProjectionMatrix()
-    controls.update()
+    updateControls()
     needsRender = true
   }
 
@@ -181,6 +223,15 @@ function main() {
     }
   }
 
+  // The camera lives at the distance the controls expect and is only moved to
+  // the eased distance for the moment it takes to draw, so a wheel notch
+  // handled between frames still dollies from the right place.
+  function render() {
+    camera.position.setLength(zoomShown)
+    renderer.render(scene, camera)
+    camera.position.setLength(zoomTarget)
+  }
+
   function tick(now) {
     frame = requestAnimationFrame(tick)
 
@@ -189,9 +240,9 @@ function main() {
       needsRender = true
     }
 
-    // Reports whether damping or input actually moved the camera, which is
-    // what lets an idle globe stop redrawing.
-    if (controls.update()) needsRender = true
+    // Reports whether damping, input or the zoom easing actually moved the
+    // camera, which is what lets an idle globe stop redrawing.
+    if (updateControls()) needsRender = true
 
     if (!needsRender) {
       lastFrameAt = 0
@@ -199,7 +250,7 @@ function main() {
     }
 
     needsRender = false
-    renderer.render(scene, camera)
+    render()
 
     if (lastFrameAt === 0) lastFrameAt = now
     else trackFrameCost(now)
@@ -248,7 +299,7 @@ function main() {
       drawingBuffer: `${gl.drawingBufferWidth}x${gl.drawingBufferHeight}`,
       megapixels: +((gl.drawingBufferWidth * gl.drawingBufferHeight) / 1e6).toFixed(2),
       qualityScale: +quality.toFixed(2),
-      cameraDistance: +camera.position.length().toFixed(2),
+      cameraDistance: +zoomShown.toFixed(3),
     }
   }
 }
