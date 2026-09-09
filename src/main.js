@@ -26,6 +26,23 @@ const MIN_DISTANCE = 1.12
 
 const MAX_PIXEL_RATIO = 2
 
+// Ceiling on the drawing buffer, in pixels. Past this the cost is all fill
+// rate spent on detail nobody can resolve, and it is easy to blow through:
+// a 4K display at devicePixelRatio 2, or any display once the page itself is
+// zoomed out, asks for a buffer several times this size.
+const MAX_DRAWING_BUFFER_PIXELS = 6.5e6
+
+// Frame budget for the adaptive buffer scale. Rendering is only ever as
+// heavy as the machine it lands on, and this session could not reproduce the
+// slow case, so the globe measures itself and backs off rather than trusting
+// any fixed guess about what a GPU can manage.
+const SLOW_FRAME_MS = 42
+const FAST_FRAME_MS = 20
+const SLOW_FRAMES_BEFORE_BACKING_OFF = 12
+const FAST_FRAMES_BEFORE_RECOVERING = 90
+const MIN_QUALITY = 0.45
+const QUALITY_STEP = 0.72
+
 function main() {
   const canvas = document.getElementById('globe')
 
@@ -40,8 +57,22 @@ function main() {
   }
 
   renderer.setClearColor(0x000000, 0)
-  const pixelRatio = Math.min(window.devicePixelRatio, MAX_PIXEL_RATIO)
-  renderer.setPixelRatio(pixelRatio)
+
+  // Scaled down when frames run long, back up when they are comfortable.
+  let quality = 1
+
+  // devicePixelRatio is not fixed: it changes when the page is zoomed or the
+  // window moves to another display. Setting it once at startup leaves the
+  // buffer sized for a ratio that no longer applies, which is how a zoom can
+  // quietly ask for a buffer several times larger than the screen.
+  function applyPixelRatio(width, height) {
+    const budget = Math.sqrt(MAX_DRAWING_BUFFER_PIXELS / Math.max(1, width * height))
+    const ratio = Math.min(window.devicePixelRatio, MAX_PIXEL_RATIO, budget) * quality
+
+    const clamped = Math.max(MIN_QUALITY, ratio)
+    renderer.setPixelRatio(clamped)
+    globe.setPixelRatio(clamped)
+  }
 
   const scene = new Scene()
   const camera = new PerspectiveCamera(35, 1, 0.01, 100)
@@ -56,7 +87,6 @@ function main() {
       needsRender = true
     },
   })
-  globe.setPixelRatio(pixelRatio)
   scene.add(globe.object)
 
   const controls = new OrbitControls(camera, canvas)
@@ -101,6 +131,7 @@ function main() {
     const { clientWidth, clientHeight } = canvas
     if (clientWidth === 0 || clientHeight === 0) return
 
+    applyPixelRatio(clientWidth, clientHeight)
     renderer.setSize(clientWidth, clientHeight, false)
     globe.setResolution(clientWidth, clientHeight)
     camera.aspect = clientWidth / clientHeight
@@ -120,7 +151,37 @@ function main() {
     needsRender = true
   }
 
-  function tick() {
+  let slowFrames = 0
+  let fastFrames = 0
+  let lastFrameAt = 0
+
+  // Only judged on frames that actually drew something, since an idle globe
+  // skips rendering and would otherwise look infinitely fast.
+  function trackFrameCost(now) {
+    const elapsed = now - lastFrameAt
+    lastFrameAt = now
+    if (elapsed <= 0 || elapsed > 1000) return
+
+    if (elapsed > SLOW_FRAME_MS) {
+      fastFrames = 0
+      slowFrames += 1
+    } else if (elapsed < FAST_FRAME_MS) {
+      slowFrames = 0
+      fastFrames += 1
+    }
+
+    if (slowFrames >= SLOW_FRAMES_BEFORE_BACKING_OFF && quality > MIN_QUALITY) {
+      quality = Math.max(MIN_QUALITY, quality * QUALITY_STEP)
+      slowFrames = 0
+      resize()
+    } else if (fastFrames >= FAST_FRAMES_BEFORE_RECOVERING && quality < 1) {
+      quality = Math.min(1, quality / QUALITY_STEP)
+      fastFrames = 0
+      resize()
+    }
+  }
+
+  function tick(now) {
     frame = requestAnimationFrame(tick)
 
     if (spinning) {
@@ -132,9 +193,16 @@ function main() {
     // what lets an idle globe stop redrawing.
     if (controls.update()) needsRender = true
 
-    if (!needsRender) return
+    if (!needsRender) {
+      lastFrameAt = 0
+      return
+    }
+
     needsRender = false
     renderer.render(scene, camera)
+
+    if (lastFrameAt === 0) lastFrameAt = now
+    else trackFrameCost(now)
   }
 
   function stop() {
@@ -168,6 +236,21 @@ function main() {
   //   asri.points.set([{ lon, lat }])
   //   asri.heatmap.set([{ lon, lat, weight }], { radiusDegrees: 8 })
   window.asri = globe
+
+  // Reports what the renderer is actually doing. Frame cost depends entirely
+  // on the machine, so this is how a slow globe can be described precisely
+  // rather than guessed at: asri.diagnostics()
+  globe.diagnostics = () => {
+    const gl = renderer.getContext()
+    return {
+      devicePixelRatio: window.devicePixelRatio,
+      pixelRatio: +renderer.getPixelRatio().toFixed(2),
+      drawingBuffer: `${gl.drawingBufferWidth}x${gl.drawingBufferHeight}`,
+      megapixels: +((gl.drawingBufferWidth * gl.drawingBufferHeight) / 1e6).toFixed(2),
+      qualityScale: +quality.toFixed(2),
+      cameraDistance: +camera.position.length().toFixed(2),
+    }
+  }
 }
 
 main()

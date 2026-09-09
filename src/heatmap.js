@@ -84,8 +84,10 @@ export function createHeatmapSurface({
   context.fillStyle = '#000000'
   context.fillRect(0, 0, TEXTURE_WIDTH, TEXTURE_HEIGHT)
 
+  // Mipmaps left on deliberately: at the default framing this 2048x1024
+  // texture is minified hard onto a small globe, and sampling it without them
+  // scatters every fragment's reads across the whole image.
   const texture = new CanvasTexture(canvas)
-  texture.minFilter = LinearFilter
   texture.magFilter = LinearFilter
 
   const ramp = RAMP.map((hex) => new Color(hex))

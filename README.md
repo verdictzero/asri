@@ -64,3 +64,19 @@ asri.heatmap.clear()
 ```
 
 `asri.ready` resolves once the boundary layers have loaded.
+
+## Rendering cost
+
+Frame cost depends entirely on the machine, so the globe measures itself. The
+drawing buffer is capped at 6.5 megapixels, and if frames keep running long it
+scales the buffer down and back up again as they recover.
+
+`asri.diagnostics()` reports what the renderer is actually doing:
+
+```js
+asri.diagnostics()
+// { devicePixelRatio: 2, pixelRatio: 2, drawingBuffer: '2400x1600',
+//   megapixels: 3.84, qualityScale: 1, cameraDistance: 4.82 }
+```
+
+A `qualityScale` below 1 means the globe has backed off to keep up.
