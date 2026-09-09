@@ -8,7 +8,8 @@ import {
   WebGLRenderer,
 } from 'three'
 
-import { GLOBE_RADIUS, createGlobe } from './globe.js'
+import { createGlobe } from './globe.js'
+import { GLOBE_RADIUS } from './sphere.js'
 
 // How much room the globe leaves around itself. At 1 it would touch the
 // edge of whichever viewport dimension is tighter. Narrow viewports get a
