@@ -62,6 +62,18 @@ one is 12.9 bits per event.
 Like the boundaries, the generated file is committed and only needs rebuilding
 when the source data or the reduction changes.
 
+## The timeline
+
+Play advances at a steady rate through the *events*, not through the
+calendar. The span reaches back to 1764 but half the events fall after 2006,
+so sweeping the dates evenly would crawl through empty centuries and then
+rush the part worth watching. Moving by event keeps something happening the
+whole way, and the playhead visibly races across the gaps in the histogram.
+
+Dragging the two handles sets a span; Apply commits it. Dragging the track
+itself scrubs the playhead. Category chips and the heatmap toggle apply
+immediately, since they are cheap.
+
 ## Plotting
 
 The globe is exposed on `window.asri` for plotting:

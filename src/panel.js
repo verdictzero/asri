@@ -1,6 +1,6 @@
 import { Color } from 'three'
 
-import { dateToDay, dayToDate, histogram, loadEvents, selectEvents } from './events.js'
+import { dateToDay, dayToDate, histogram, loadEvents, lowerBound, selectEvents } from './events.js'
 
 // The first three slots of the categorical palette, which are the most that
 // stay distinguishable when every pair can appear together, as they do on a
@@ -294,9 +294,13 @@ export async function createPanel({ globe, onChange = () => {} }) {
       if (playhead >= activeTo) playhead = activeFrom
       playing = true
       // Wound back by however far along the playhead already is, so pausing
-      // and resuming carries on from there rather than restarting.
-      const spanDays = Math.max(1, activeTo - activeFrom)
-      const progress = (playhead - activeFrom) / spanDays
+      // and resuming carries on from there rather than restarting. Measured
+      // in events, matching how playback advances.
+      const firstEvent = lowerBound(events.day, activeFrom)
+      const lastEvent = lowerBound(events.day, activeTo + 1)
+      const reached = lowerBound(events.day, playhead)
+      const progress =
+        lastEvent > firstEvent ? (reached - firstEvent) / (lastEvent - firstEvent) : 0
       playingSince = performance.now() - progress * PLAY_SECONDS * 1000
       element.play.textContent = 'Pause'
     }
@@ -344,6 +348,10 @@ export async function createPanel({ globe, onChange = () => {} }) {
 
   buildChips()
   element.panel.hidden = false
+  // The whole span is already the active one on load, so playback is
+  // available straight away rather than waiting for an Apply that would
+  // change nothing.
+  element.play.disabled = activeTo <= activeFrom
   drawRange()
   refresh()
 
@@ -354,14 +362,24 @@ export async function createPanel({ globe, onChange = () => {} }) {
     tick(now) {
       if (!playing) return false
 
-      const spanDays = activeTo - activeFrom
-      if (spanDays <= 0) return false
+      if (activeTo <= activeFrom) return false
 
       if (playingSince === 0) playingSince = now
       const elapsed = (now - playingSince) / 1000
-      const next = activeFrom + Math.round((elapsed / PLAY_SECONDS) * spanDays)
+      const progress = elapsed / PLAY_SECONDS
 
-      if (next >= activeTo) {
+      // Playback runs at a steady rate through the events rather than through
+      // the calendar. The span reaches back to 1764 but half the events fall
+      // after 2006, so an even sweep of the dates would crawl through empty
+      // centuries and then rush the part worth watching. Moving by event
+      // instead keeps something happening the whole way, and the playhead
+      // visibly races across the gaps in the histogram.
+      const firstEvent = lowerBound(events.day, activeFrom)
+      const lastEvent = lowerBound(events.day, activeTo + 1)
+      const reached = firstEvent + Math.round(progress * (lastEvent - firstEvent))
+      const next = reached >= lastEvent ? activeTo : events.day[reached]
+
+      if (progress >= 1 || reached >= lastEvent) {
         playhead = activeTo
         playing = false
         playingSince = 0
