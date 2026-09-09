@@ -2,6 +2,8 @@
    with a transparent clear colour, so the globe composites directly onto this. */
 :root {
   --bg: #141414;
+  --logo-width: 190px;
+  --edge-gap: 28px;
 }
 
 * {
@@ -24,4 +26,26 @@ canvas {
   display: block;
   width: 100%;
   height: 100%;
+  /* Drag and pinch belong to the globe, not to page scrolling. */
+  touch-action: none;
+}
+
+.logo {
+  position: fixed;
+  right: var(--edge-gap);
+  bottom: var(--edge-gap);
+  width: var(--logo-width);
+  height: auto;
+  /* The globe is the subject; the mark sits back from it a little. */
+  opacity: 0.72;
+  /* Never intercepts a drag meant for the globe. */
+  pointer-events: none;
+  user-select: none;
+}
+
+@media (max-width: 600px) {
+  :root {
+    --logo-width: 132px;
+    --edge-gap: 18px;
+  }
 }
