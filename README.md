@@ -39,6 +39,29 @@ and `topojson-client`/`world-atlas` stay out of the shipped bundle.
 
 Re-run it only when changing the source data or the thinning parameters.
 
+## Event data
+
+`data/paranormal_events.csv` holds the source records. `npm run build:events`
+reduces it to `src/generated/events.bin`: the CSV is 23MB, almost all of it
+prose the map never draws, against 309kB gzipped for the four things that are
+plotted — when, where, and which category.
+
+Events are written in date order, which does two things. Dates become steps
+from the one before, so they compress from 164kB to 11kB, and the runtime can
+find a date range by binary search rather than scanning 84,000 records.
+
+Two rows of the 84,187 are dropped: one has no date at all, and one is dated
+2053, which is a transcription error rather than a record. Partial dates
+(`1995`, `1934-04`) are kept, placed at the start of the period they name.
+
+Coordinates are stored inline. Grouping them into a table of the 23,283
+distinct locations was measured and saves only 27kB, because an index into
+that table costs nearly as much as the coordinates do — the entropy floor for
+one is 12.9 bits per event.
+
+Like the boundaries, the generated file is committed and only needs rebuilding
+when the source data or the reduction changes.
+
 ## Plotting
 
 The globe is exposed on `window.asri` for plotting:

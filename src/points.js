@@ -1,4 +1,4 @@
-import { BufferAttribute, BufferGeometry, Color, Points, ShaderMaterial } from 'three'
+import { BufferAttribute, BufferGeometry, Color, Points, ShaderMaterial, Vector3 } from 'three'
 
 import { GLOBE_RADIUS, pointOnSphere } from './sphere.js'
 
@@ -58,7 +58,7 @@ export function createPoints({
   // Chosen so a marker's size reads as roughly its size in CSS pixels at the
   // default framing, growing as the camera moves closer.
   scale = 3.4,
-  maxPoints = 20000,
+  maxPoints = 90000,
   // Nothing redraws on its own, so changing the data has to ask for a frame.
   onChange = () => {},
 } = {}) {
@@ -97,6 +97,15 @@ export function createPoints({
 
   const defaultColor = new Color(color)
   const scratch = new Color()
+  const scratchPoint = new Vector3()
+
+  function commit(count) {
+    geometry.attributes.position.needsUpdate = true
+    geometry.attributes.size.needsUpdate = true
+    geometry.attributes.tint.needsUpdate = true
+    geometry.setDrawRange(0, count)
+    onChange()
+  }
 
   return {
     object,
@@ -106,6 +115,7 @@ export function createPoints({
     },
 
     // Each marker is { lon, lat } and may carry its own size and color.
+    // Fine for a handful; use plot() for a dataset.
     set(markers) {
       const count = Math.min(markers.length, maxPoints)
 
@@ -125,13 +135,38 @@ export function createPoints({
         tints[i * 3 + 2] = tint.b
       }
 
-      geometry.attributes.position.needsUpdate = true
-      geometry.attributes.size.needsUpdate = true
-      geometry.attributes.tint.needsUpdate = true
-      geometry.setDrawRange(0, count)
-      onChange()
-
+      commit(count)
       return count
+    },
+
+    // Bulk path, reading straight from typed arrays. Tens of thousands of
+    // markers as objects would mean tens of thousands of allocations every
+    // time a filter changes, which is the common case here.
+    //
+    // indices selects which entries of lon/lat/group to draw, so a filtered
+    // subset needs no copy of the source data. palette holds one Color per
+    // group value.
+    plot({ indices, count, lon, lat, group, palette, size: markerSize = size }) {
+      const total = Math.min(count, maxPoints)
+
+      for (let i = 0; i < total; i++) {
+        const at = indices ? indices[i] : i
+        const point = pointOnSphere(lon[at], lat[at], GLOBE_RADIUS, scratchPoint)
+
+        positions[i * 3] = point.x
+        positions[i * 3 + 1] = point.y
+        positions[i * 3 + 2] = point.z
+
+        sizes[i] = markerSize
+
+        const tint = palette[group ? group[at] : 0] ?? defaultColor
+        tints[i * 3] = tint.r
+        tints[i * 3 + 1] = tint.g
+        tints[i * 3 + 2] = tint.b
+      }
+
+      commit(total)
+      return total
     },
 
     clear() {

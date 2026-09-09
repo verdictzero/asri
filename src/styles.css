@@ -49,3 +49,211 @@ canvas {
     --edge-gap: 18px;
   }
 }
+
+/* --- Control panel ------------------------------------------------------ */
+
+.panel {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: flex-end;
+  gap: 26px;
+  padding: 16px var(--edge-gap) var(--edge-gap);
+  /* The globe keeps the drag; only the controls take input. */
+  pointer-events: none;
+  /* Lifts the controls off the globe without drawing a hard edge. */
+  background: linear-gradient(to top, rgba(20, 20, 20, 0.92) 55%, rgba(20, 20, 20, 0));
+  font: 500 12px/1.4 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: #8e8e8e;
+}
+
+.panel__controls {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.row__end {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.chip {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid #333;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.02);
+  color: #8e8e8e;
+  font: inherit;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.chip:hover {
+  border-color: #4a4a4a;
+  color: #c8c8c8;
+}
+
+.chip:focus-visible {
+  outline: 2px solid #5598e7;
+  outline-offset: 1px;
+}
+
+/* Identity is carried by the label, not the colour alone. */
+.chip__swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.35;
+}
+
+.chip[aria-pressed='true'] {
+  border-color: #5a5a5a;
+  color: #ededed;
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.chip[aria-pressed='true'] .chip__swatch {
+  opacity: 1;
+}
+
+.chip__count {
+  color: #6a6a6a;
+  font-variant-numeric: tabular-nums;
+}
+
+.chip--apply[data-dirty='true'] {
+  border-color: #3987e5;
+  color: #cde2fb;
+}
+
+.chip:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* --- Range with histogram ---------------------------------------------- */
+
+.range {
+  position: relative;
+  height: 46px;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.range__histogram {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.range__selection {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: rgba(87, 152, 231, 0.1);
+  border-left: 1px solid rgba(137, 187, 240, 0.55);
+  border-right: 1px solid rgba(137, 187, 240, 0.55);
+  pointer-events: none;
+}
+
+.range__playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  margin-left: -0.5px;
+  background: #f0f0f0;
+  pointer-events: none;
+}
+
+.range__handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 18px;
+  margin-left: -9px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.range__handle::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 8px;
+  width: 2px;
+  background: #89bbf0;
+}
+
+.range__handle:hover::after,
+.range__handle:focus-visible::after {
+  background: #cde2fb;
+}
+
+.range__handle:focus-visible {
+  outline: none;
+}
+
+.readout {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.readout--count {
+  margin-left: auto;
+  color: #6a6a6a;
+}
+
+.panel .logo {
+  position: static;
+  flex: none;
+  align-self: flex-end;
+  margin-bottom: 2px;
+}
+
+@media (max-width: 720px) {
+  .panel {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .panel .logo {
+    align-self: flex-end;
+  }
+
+  .readout--count {
+    display: none;
+  }
+}

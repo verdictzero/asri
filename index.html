@@ -7,13 +7,45 @@
   </head>
   <body>
     <canvas id="globe"></canvas>
-    <img
-      class="logo"
-      src="/src/assets/asri-logo.png"
-      alt="Anomalous Science Research Institute"
-      width="900"
-      height="266"
-    />
+
+    <div class="panel" id="panel" hidden>
+      <div class="panel__controls">
+        <div class="row row--filters">
+          <div class="chips" id="categories"></div>
+          <div class="row__end">
+            <button type="button" class="chip chip--plain" id="select-all">All</button>
+            <button type="button" class="chip chip--plain" id="select-none">None</button>
+            <button type="button" class="chip" id="heatmap" aria-pressed="false">Heatmap</button>
+          </div>
+        </div>
+
+        <div class="range" id="range">
+          <canvas class="range__histogram" id="histogram"></canvas>
+          <div class="range__selection" id="selection"></div>
+          <div class="range__playhead" id="playhead" hidden></div>
+          <button type="button" class="range__handle" id="handle-from"
+                  role="slider" aria-label="Start of range"></button>
+          <button type="button" class="range__handle" id="handle-to"
+                  role="slider" aria-label="End of range"></button>
+        </div>
+
+        <div class="row row--time">
+          <button type="button" class="chip chip--play" id="play" disabled>Play</button>
+          <span class="readout" id="readout"></span>
+          <span class="readout readout--count" id="count"></span>
+          <button type="button" class="chip chip--apply" id="apply">Apply</button>
+        </div>
+      </div>
+
+      <img
+        class="logo"
+        src="/src/assets/asri-logo.png"
+        alt="Anomalous Science Research Institute"
+        width="900"
+        height="266"
+      />
+    </div>
+
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>

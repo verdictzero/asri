@@ -4,6 +4,7 @@ import { Clock, MathUtils, PerspectiveCamera, Scene, WebGLRenderer } from 'three
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 
 import { createGlobe } from './globe.js'
+import { createPanel } from './panel.js'
 import { GLOBE_RADIUS } from './sphere.js'
 
 // How much room the globe leaves around itself. At 1 it would touch the edge
@@ -240,6 +241,8 @@ function main() {
       needsRender = true
     }
 
+    panel?.tick(now)
+
     // Reports whether damping, input or the zoom easing actually moved the
     // camera, which is what lets an idle globe stop redrawing.
     if (updateControls()) needsRender = true
@@ -268,6 +271,23 @@ function main() {
     clock.getDelta()
     frame = requestAnimationFrame(tick)
   }
+
+  // The event dataset and its controls arrive after the globe is already
+  // turning, so a slow load never holds up first paint.
+  let panel = null
+  createPanel({
+    globe,
+    onChange: () => {
+      needsRender = true
+    },
+  })
+    .then((created) => {
+      panel = created
+      needsRender = true
+    })
+    .catch((error) => {
+      console.error('Could not start the event panel', error)
+    })
 
   new ResizeObserver(resize).observe(canvas)
 

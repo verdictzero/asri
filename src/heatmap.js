@@ -1,11 +1,30 @@
-import { CanvasTexture, Color, LinearFilter, ShaderMaterial } from 'three'
+import {
+  ClampToEdgeWrapping,
+  Color,
+  DataTexture,
+  LinearFilter,
+  RedFormat,
+  RepeatWrapping,
+  ShaderMaterial,
+  UnsignedByteType,
+} from 'three'
 
-// The heatmap is painted into an equirectangular canvas and used as the
-// globe body's own texture, so it is part of the one opaque surface rather
-// than a shell floating above it. Nothing to z-fight, and it is occluded on
-// the far side for free.
-const TEXTURE_WIDTH = 2048
-const TEXTURE_HEIGHT = 1024
+// The heatmap is built as an equirectangular grid and used as the globe
+// body's own texture, so it is part of the one opaque surface rather than a
+// shell above it. Nothing to z-fight, and it is occluded on the far side for
+// free.
+//
+// Density is counted into the grid and then blurred, rather than each sample
+// being drawn as its own soft blob. With tens of thousands of samples the
+// blob approach costs one canvas gradient per sample; counting costs one
+// array increment, and the blur that follows does not care how many samples
+// went in.
+const GRID_WIDTH = 512
+const GRID_HEIGHT = 256
+
+// Three box passes approximate a Gaussian closely enough, and each one is a
+// running sum, so the cost does not grow with the radius.
+const BLUR_PASSES = 3
 
 // Sequential encoding wants a single hue running light to dark. On a dark
 // surface that runs the other way: near-zero recedes into the body and
@@ -24,6 +43,7 @@ const vertexShader = /* glsl */ `
 
 const fragmentShader = /* glsl */ `
   uniform sampler2D uHeat;
+  uniform float uOpacity;
   uniform vec3 uBodyColor;
   uniform vec3 uRamp0;
   uniform vec3 uRamp1;
@@ -48,10 +68,10 @@ const fragmentShader = /* glsl */ `
   }
 
   void main() {
-    float heat = texture2D(uHeat, vUv).r;
+    float heat = texture2D(uHeat, vUv).r * uOpacity;
 
     // The ramp's low end is already much lighter than the body, so easing the
-    // blend across the bottom of the range is what gives a sample a soft edge
+    // blend across the bottom of the range is what gives a patch a soft edge
     // instead of landing as a flat disc.
     vec3 color = mix(uBodyColor, rampColor(heat), smoothstep(0.0, 0.42, heat));
 
@@ -61,13 +81,46 @@ const fragmentShader = /* glsl */ `
   }
 `
 
-// Longitude/latitude to a pixel in the equirectangular canvas. This has to
-// agree with how three lays UVs onto SphereGeometry, where u runs the other
-// way round from longitude.
-function toCanvas(lon, lat) {
-  return {
-    x: (0.5 - lon / 360) * TEXTURE_WIDTH,
-    y: ((90 - lat) / 180) * TEXTURE_HEIGHT,
+// Blurs a row at a time with a running sum, wrapping around the seam so a
+// patch at the date line is not cut in half. The radius widens toward the
+// poles because a degree of longitude covers less ground there, which is what
+// keeps a patch round on the globe instead of squashed.
+function blurHorizontal(source, target, baseRadius) {
+  for (let y = 0; y < GRID_HEIGHT; y++) {
+    const latitude = 90 - ((y + 0.5) / GRID_HEIGHT) * 180
+    const cosLat = Math.max(0.08, Math.cos((latitude * Math.PI) / 180))
+    const radius = Math.min(GRID_WIDTH >> 1, Math.max(1, Math.round(baseRadius / cosLat)))
+    const span = radius * 2 + 1
+    const row = y * GRID_WIDTH
+
+    let sum = 0
+    for (let i = -radius; i <= radius; i++) {
+      sum += source[row + ((i + GRID_WIDTH) % GRID_WIDTH)]
+    }
+
+    for (let x = 0; x < GRID_WIDTH; x++) {
+      target[row + x] = sum / span
+      sum -= source[row + ((x - radius + GRID_WIDTH) % GRID_WIDTH)]
+      sum += source[row + ((x + radius + 1) % GRID_WIDTH)]
+    }
+  }
+}
+
+// Latitude does not wrap, so the edges hold their end value rather than
+// folding over the pole.
+function blurVertical(source, target, radius) {
+  const span = radius * 2 + 1
+  const clamp = (y) => Math.min(GRID_HEIGHT - 1, Math.max(0, y))
+
+  for (let x = 0; x < GRID_WIDTH; x++) {
+    let sum = 0
+    for (let i = -radius; i <= radius; i++) sum += source[clamp(i) * GRID_WIDTH + x]
+
+    for (let y = 0; y < GRID_HEIGHT; y++) {
+      target[y * GRID_WIDTH + x] = sum / span
+      sum -= source[clamp(y - radius) * GRID_WIDTH + x]
+      sum += source[clamp(y + radius + 1) * GRID_WIDTH + x]
+    }
   }
 }
 
@@ -76,25 +129,25 @@ export function createHeatmapSurface({
   // Nothing redraws on its own, so changing the data has to ask for a frame.
   onChange = () => {},
 } = {}) {
-  const canvas = document.createElement('canvas')
-  canvas.width = TEXTURE_WIDTH
-  canvas.height = TEXTURE_HEIGHT
+  const cells = GRID_WIDTH * GRID_HEIGHT
+  const counts = new Float32Array(cells)
+  const scratch = new Float32Array(cells)
+  const texels = new Uint8Array(cells)
 
-  const context = canvas.getContext('2d', { willReadFrequently: false })
-  context.fillStyle = '#000000'
-  context.fillRect(0, 0, TEXTURE_WIDTH, TEXTURE_HEIGHT)
-
-  // Mipmaps left on deliberately: at the default framing this 2048x1024
-  // texture is minified hard onto a small globe, and sampling it without them
-  // scatters every fragment's reads across the whole image.
-  const texture = new CanvasTexture(canvas)
+  const texture = new DataTexture(texels, GRID_WIDTH, GRID_HEIGHT, RedFormat, UnsignedByteType)
+  texture.minFilter = LinearFilter
   texture.magFilter = LinearFilter
+  // Longitude wraps, latitude does not.
+  texture.wrapS = RepeatWrapping
+  texture.wrapT = ClampToEdgeWrapping
+  texture.needsUpdate = true
 
   const ramp = RAMP.map((hex) => new Color(hex))
 
   const material = new ShaderMaterial({
     uniforms: {
       uHeat: { value: texture },
+      uOpacity: { value: 1 },
       uBodyColor: { value: new Color(bodyColor) },
       uRamp0: { value: ramp[0] },
       uRamp1: { value: ramp[1] },
@@ -112,64 +165,85 @@ export function createHeatmapSurface({
     polygonOffsetUnits: 4,
   })
 
-  function clear() {
-    context.fillStyle = '#000000'
-    context.fillRect(0, 0, TEXTURE_WIDTH, TEXTURE_HEIGHT)
+  function upload() {
     texture.needsUpdate = true
     onChange()
+  }
+
+  function clear() {
+    counts.fill(0)
+    texels.fill(0)
+    upload()
+  }
+
+  // Counts samples into the grid, blurs, and scales so the busiest cell is
+  // the top of the ramp. indices selects a subset of lon/lat without copying.
+  function build({ indices, count, lon, lat }, { radiusDegrees = 3 } = {}) {
+    counts.fill(0)
+
+    for (let i = 0; i < count; i++) {
+      const at = indices ? indices[i] : i
+
+      // Has to agree with how three lays UVs onto SphereGeometry, where u
+      // runs the other way round from longitude. Row order follows v
+      // directly: a DataTexture is not flipped on upload the way a canvas
+      // one is, so the first row is the bottom of the image, not the top.
+      let x = Math.floor((0.5 - lon[at] / 360) * GRID_WIDTH)
+      x = ((x % GRID_WIDTH) + GRID_WIDTH) % GRID_WIDTH
+      const y = Math.min(
+        GRID_HEIGHT - 1,
+        Math.max(0, Math.floor(((lat[at] + 90) / 180) * GRID_HEIGHT)),
+      )
+
+      counts[y * GRID_WIDTH + x] += 1
+    }
+
+    const radiusX = Math.max(1, Math.round((radiusDegrees / 360) * GRID_WIDTH))
+    const radiusY = Math.max(1, Math.round((radiusDegrees / 180) * GRID_HEIGHT))
+
+    for (let pass = 0; pass < BLUR_PASSES; pass++) {
+      blurHorizontal(counts, scratch, radiusX)
+      blurVertical(scratch, counts, radiusY)
+    }
+
+    let peak = 0
+    for (let i = 0; i < cells; i++) if (counts[i] > peak) peak = counts[i]
+
+    if (peak <= 0) {
+      texels.fill(0)
+    } else {
+      // Square root, so a handful of busy cells does not flatten everywhere
+      // else to nothing. Counts of this kind span orders of magnitude.
+      const inverse = 1 / Math.sqrt(peak)
+      for (let i = 0; i < cells; i++) {
+        texels[i] = Math.min(255, Math.round(Math.sqrt(counts[i]) * inverse * 255))
+      }
+    }
+
+    upload()
+    return count
   }
 
   return {
     material,
     clear,
+    build,
 
-    // Each sample is { lon, lat } and may carry a weight. radiusDegrees is
-    // how far a sample's influence spreads across the surface.
-    set(samples, { radiusDegrees = 6, max } = {}) {
-      context.fillStyle = '#000000'
-      context.fillRect(0, 0, TEXTURE_WIDTH, TEXTURE_HEIGHT)
-
-      const ceiling = max ?? Math.max(1e-6, ...samples.map((s) => s.weight ?? 1))
-
-      // Overlapping samples should sum rather than paint over each other.
-      context.globalCompositeOperation = 'lighter'
-
-      const radiusY = (radiusDegrees / 180) * TEXTURE_HEIGHT
-
-      for (const sample of samples) {
-        const { x, y } = toCanvas(sample.lon, sample.lat)
-        const intensity = Math.min(1, (sample.weight ?? 1) / ceiling)
-
-        // Longitude compresses toward the poles, so a patch that is round on
-        // the globe has to be drawn wider than it is tall near them.
-        const cosLat = Math.max(0.08, Math.cos((sample.lat * Math.PI) / 180))
-        const radiusX = ((radiusDegrees / 360) * TEXTURE_WIDTH) / cosLat
-
-        // Drawn three times so a sample near the seam bleeds across it
-        // instead of being cut in half.
-        for (const offset of [-TEXTURE_WIDTH, 0, TEXTURE_WIDTH]) {
-          const centreX = x + offset
-          if (centreX + radiusX < 0 || centreX - radiusX > TEXTURE_WIDTH) continue
-
-          const gradient = context.createRadialGradient(centreX, y, 0, centreX, y, radiusY)
-          gradient.addColorStop(0, `rgba(255, 255, 255, ${intensity})`)
-          gradient.addColorStop(1, 'rgba(255, 255, 255, 0)')
-
-          context.save()
-          context.translate(centreX, y)
-          context.scale(radiusX / radiusY, 1)
-          context.translate(-centreX, -y)
-          context.fillStyle = gradient
-          context.fillRect(centreX - radiusY, y - radiusY, radiusY * 2, radiusY * 2)
-          context.restore()
-        }
-      }
-
-      context.globalCompositeOperation = 'source-over'
-      texture.needsUpdate = true
+    setOpacity(value) {
+      material.uniforms.uOpacity.value = value
       onChange()
+    },
 
-      return samples.length
+    // Each sample is { lon, lat }. Convenience wrapper over build().
+    set(samples, options) {
+      const count = samples.length
+      const lon = new Float32Array(count)
+      const lat = new Float32Array(count)
+      for (let i = 0; i < count; i++) {
+        lon[i] = samples[i].lon
+        lat[i] = samples[i].lat
+      }
+      return build({ count, lon, lat }, options)
     },
   }
 }
