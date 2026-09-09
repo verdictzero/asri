@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - claude/3d-globe-landing-wpg7bb
   workflow_dispatch:
 
 permissions:
