@@ -26,11 +26,12 @@ const GRID_HEIGHT = 256
 // running sum, so the cost does not grow with the radius.
 const BLUR_PASSES = 3
 
-// Sequential encoding wants a single hue running light to dark. On a dark
-// surface that runs the other way: near-zero recedes into the body and
-// magnitude climbs toward the light end. Lightness is monotonic across these
-// six steps, which is the check that matters for a ramp.
-const RAMP = ['#104281', '#1c5cab', '#2a78d6', '#5598e7', '#9ec5f4', '#cde2fb']
+// Sequential encoding wants a single hue, and on a dark surface it runs dark
+// to light as magnitude climbs. Lightness is monotonic across these six steps,
+// which is the check that matters for a ramp. A warm hue, and the darkest
+// step sits just above the body colour so that when the heatmap is on it
+// carries across the whole globe rather than leaving empty ground untinted.
+const RAMP = ['#3b1a08', '#7a3110', '#b04d15', '#df7326', '#f2a054', '#fbcf9b']
 
 const vertexShader = /* glsl */ `
   varying vec2 vUv;
@@ -68,12 +69,14 @@ const fragmentShader = /* glsl */ `
   }
 
   void main() {
-    float heat = texture2D(uHeat, vUv).r * uOpacity;
+    float heat = texture2D(uHeat, vUv).r;
 
-    // The ramp's low end is already much lighter than the body, so easing the
-    // blend across the bottom of the range is what gives a patch a soft edge
-    // instead of landing as a flat disc.
-    vec3 color = mix(uBodyColor, rampColor(heat), smoothstep(0.0, 0.42, heat));
+    // uOpacity carries the layer in and out. At full strength the whole
+    // sphere wears the ramp, so ground with no events reads as the bottom of
+    // the scale rather than dropping back to bare body colour: the planet is
+    // coloured by the data everywhere, and where it is empty that is itself
+    // the reading.
+    vec3 color = mix(uBodyColor, rampColor(heat), uOpacity);
 
     gl_FragColor = vec4(color, 1.0);
 
@@ -147,7 +150,8 @@ export function createHeatmapSurface({
   const material = new ShaderMaterial({
     uniforms: {
       uHeat: { value: texture },
-      uOpacity: { value: 1 },
+      // Off by default; the panel raises it when the layer is switched on.
+      uOpacity: { value: 0 },
       uBodyColor: { value: new Color(bodyColor) },
       uRamp0: { value: ramp[0] },
       uRamp1: { value: ramp[1] },

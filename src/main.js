@@ -277,6 +277,8 @@ function main() {
   let panel = null
   createPanel({
     globe,
+    camera,
+    canvas,
     onChange: () => {
       needsRender = true
     },

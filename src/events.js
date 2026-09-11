@@ -1,5 +1,14 @@
 import eventsUrl from './generated/events.bin?url'
 
+// Every detail chunk, as a hashed URL. Listing them eagerly costs a string
+// each and nothing more: the files themselves are only fetched when a marker
+// is actually clicked.
+const detailUrls = Object.entries(
+  import.meta.glob('./generated/details/*.json', { query: '?url', import: 'default', eager: true }),
+)
+  .sort(([a], [b]) => a.localeCompare(b))
+  .map(([, url]) => url)
+
 // Degrees per quantised unit. Must match scripts/build-events.mjs.
 const SCALE = 180 / 32767
 
@@ -36,7 +45,11 @@ export async function loadEvents() {
   offset += count * 2
   const rawLat = new Int16Array(buffer, offset, count)
   offset += count * 2
+  const country = new Uint16Array(buffer, offset, count)
+  offset += count * 2
   const category = new Uint8Array(buffer, offset, count)
+  offset += count
+  const creature = new Uint8Array(buffer, offset, count)
 
   // Dates are stored as steps from the one before, which is what makes them
   // compress. Running them back up gives absolute days, still in order.
@@ -54,16 +67,52 @@ export async function loadEvents() {
     lat[i] = rawLat[i] * SCALE
   }
 
+  const chunkCache = new Map()
+
   return {
     count,
     day,
     lon,
     lat,
     category,
+    creature,
+    country,
     categories: meta.categories,
+    creatures: meta.creatures,
+    countries: meta.countries,
     counts: meta.counts,
+    creatureCounts: meta.creatureCounts,
+    countryCounts: meta.countryCounts,
     firstDay: day[0],
     lastDay: day[count - 1],
+
+    // The write-ups are split into numbered chunks, so reading one event's
+    // text means fetching only the block it sits in. Chunks are kept once
+    // fetched, since clicking around tends to stay in the same period.
+    async detail(index) {
+      const chunk = Math.floor(index / meta.detailsPerChunk)
+      const url = detailUrls[chunk]
+      if (!url) return null
+
+      if (!chunkCache.has(chunk)) {
+        chunkCache.set(
+          chunk,
+          fetch(url)
+            .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+            .catch((error) => {
+              chunkCache.delete(chunk)
+              throw error
+            }),
+        )
+      }
+
+      const rows = await chunkCache.get(chunk)
+      const row = rows[index - chunk * meta.detailsPerChunk]
+      if (!row) return null
+
+      const [name, location, description] = row
+      return { name, location, description }
+    },
   }
 }
 
@@ -82,16 +131,29 @@ export function lowerBound(day, target) {
   return low
 }
 
-// Fills `into` with the indices of events inside [fromDay, toDay] whose
-// category is enabled, and returns how many there were. Reusing the same
-// array avoids allocating a new one on every scrub frame.
-export function selectEvents(events, { fromDay, toDay, enabled }, into) {
+// Fills `into` with the indices of events inside [fromDay, toDay] that pass
+// the filters, and returns how many there were. Reusing the same array avoids
+// allocating a new one on every scrub frame.
+//
+// `creature` narrows the cryptid category alone, since that is the only one
+// with a creature to name; the other categories pass through untouched.
+// `country` and `creature` are -1 when not narrowing.
+export function selectEvents(
+  events,
+  { fromDay, toDay, enabled, creature = -1, country = -1, cryptidCategory = -1 },
+  into,
+) {
   const start = lowerBound(events.day, fromDay)
   const end = lowerBound(events.day, toDay + 1)
 
   let written = 0
   for (let i = start; i < end; i++) {
-    if (enabled[events.category[i]]) into[written++] = i
+    if (!enabled[events.category[i]]) continue
+    if (country >= 0 && events.country[i] !== country) continue
+    if (creature >= 0 && events.category[i] === cryptidCategory && events.creature[i] !== creature) {
+      continue
+    }
+    into[written++] = i
   }
 
   return written

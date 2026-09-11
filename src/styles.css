@@ -257,3 +257,93 @@ canvas {
     display: none;
   }
 }
+
+/* --- Region and creature selects ---------------------------------------- */
+
+.field {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #6a6a6a;
+  white-space: nowrap;
+}
+
+.field select {
+  max-width: 170px;
+  padding: 5px 8px;
+  border: 1px solid #333;
+  border-radius: 3px;
+  background: #1c1c1c;
+  color: #c8c8c8;
+  font: inherit;
+  cursor: pointer;
+}
+
+.field select:hover {
+  border-color: #4a4a4a;
+}
+
+.field select:focus-visible {
+  outline: 2px solid #5598e7;
+  outline-offset: 1px;
+}
+
+/* --- Clicked event -------------------------------------------------------- */
+
+.detail {
+  position: fixed;
+  top: var(--edge-gap);
+  left: var(--edge-gap);
+  width: min(340px, calc(100vw - 2 * var(--edge-gap)));
+  padding: 14px 16px 16px;
+  border: 1px solid #333;
+  border-radius: 4px;
+  background: rgba(24, 24, 24, 0.94);
+  color: #b4b4b4;
+  font: 400 12px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.detail__close {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  border: 0;
+  background: none;
+  color: #6a6a6a;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.detail__close:hover {
+  color: #ededed;
+}
+
+.detail__kind {
+  margin-bottom: 4px;
+  color: #df7326;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.detail__title {
+  margin-bottom: 6px;
+  color: #ededed;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+  /* Report titles from the bulk sources run long. */
+  overflow-wrap: anywhere;
+}
+
+.detail__where {
+  margin-bottom: 8px;
+  color: #7d7d7d;
+  font-variant-numeric: tabular-nums;
+}
+
+.detail__body {
+  overflow-wrap: anywhere;
+}

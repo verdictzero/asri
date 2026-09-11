@@ -1,6 +1,7 @@
-import { Color } from 'three'
+import { Color, Vector3 } from 'three'
 
 import { dateToDay, dayToDate, histogram, loadEvents, lowerBound, selectEvents } from './events.js'
+import { GLOBE_RADIUS, pointOnSphere } from './sphere.js'
 
 // The first three slots of the categorical palette, which are the most that
 // stay distinguishable when every pair can appear together, as they do on a
@@ -17,7 +18,11 @@ const HISTOGRAM_BUCKETS = 260
 // How long a full play-through of the selected span takes.
 const PLAY_SECONDS = 24
 
-const MARKER_SIZE = 3.4
+// Small enough that dense areas read as texture rather than a solid mass.
+const MARKER_SIZE = 1.8
+
+// How near a click has to land, in CSS pixels, to count as hitting a marker.
+const PICK_RADIUS = 9
 
 const dayFormat = new Intl.DateTimeFormat('en-GB', {
   year: 'numeric',
@@ -31,7 +36,7 @@ function label(day) {
   return dayFormat.format(dayToDate(day))
 }
 
-export async function createPanel({ globe, onChange = () => {} }) {
+export async function createPanel({ globe, camera, canvas, onChange = () => {} }) {
   const events = await loadEvents()
 
   const element = {
@@ -50,6 +55,14 @@ export async function createPanel({ globe, onChange = () => {} }) {
     readout: document.getElementById('readout'),
     count: document.getElementById('count'),
     apply: document.getElementById('apply'),
+    region: document.getElementById('region'),
+    creature: document.getElementById('creature'),
+    detail: document.getElementById('detail'),
+    detailKind: document.getElementById('detail-kind'),
+    detailTitle: document.getElementById('detail-title'),
+    detailWhere: document.getElementById('detail-where'),
+    detailBody: document.getElementById('detail-body'),
+    detailClose: document.getElementById('detail-close'),
   }
 
   // Ordered by how many events each holds, so the largest take the hues that
@@ -79,12 +92,18 @@ export async function createPanel({ globe, onChange = () => {} }) {
   let playingSince = 0
   let heatmapOn = false
   let lastHeatmapAt = 0
+  let creatureFilter = -1
+  let countryFilter = -1
+
+  const cryptidCategory = events.categories.indexOf('cryptid')
 
   const dayToFraction = (day) => (day - span.first) / Math.max(1, span.last - span.first)
   const fractionToDay = (t) =>
     Math.round(span.first + Math.min(1, Math.max(0, t)) * (span.last - span.first))
 
   // --- drawing ----------------------------------------------------------
+
+  let visible = 0
 
   const bins = histogram(events, HISTOGRAM_BUCKETS)
   // Square root, because a couple of peak years hold more events than whole
@@ -175,7 +194,18 @@ export async function createPanel({ globe, onChange = () => {} }) {
 
   function refresh({ rebuildHeat = true } = {}) {
     const upTo = playing || playhead < activeTo ? playhead : activeTo
-    const total = selectEvents(events, { fromDay: activeFrom, toDay: upTo, enabled }, selection)
+    const total = selectEvents(
+      events,
+      {
+        fromDay: activeFrom,
+        toDay: upTo,
+        enabled,
+        creature: creatureFilter,
+        country: countryFilter,
+        cryptidCategory,
+      },
+      selection,
+    )
 
     globe.points.plot({
       indices: selection,
@@ -193,6 +223,8 @@ export async function createPanel({ globe, onChange = () => {} }) {
         { radiusDegrees: 2.5 },
       )
     }
+
+    visible = total
 
     element.count.textContent = `${total.toLocaleString()} of ${events.count.toLocaleString()} events`
     onChange()
@@ -342,8 +374,130 @@ export async function createPanel({ globe, onChange = () => {} }) {
   element.heatmap.addEventListener('click', () => {
     heatmapOn = !heatmapOn
     element.heatmap.setAttribute('aria-pressed', String(heatmapOn))
+    // At full strength the ramp carries across the whole sphere, so ground
+    // with no events reads as the bottom of the scale rather than as bare
+    // globe. Dropping it to zero hands the surface back.
+    globe.heatmap.setOpacity(heatmapOn ? 1 : 0)
     if (!heatmapOn) globe.heatmap.clear()
     refresh()
+  })
+
+  // --- region and creature ---------------------------------------------
+
+  function fillSelect(node, allLabel, names, counts, { skipBlank = true } = {}) {
+    const options = names
+      .map((name, index) => ({ name, index, total: counts[name] ?? 0 }))
+      .filter(({ name, total }) => total > 0 && (!skipBlank || name !== ''))
+      .sort((a, b) => b.total - a.total)
+
+    node.innerHTML = `<option value="-1">${allLabel}</option>`
+    for (const { name, index, total } of options) {
+      const option = document.createElement('option')
+      option.value = String(index)
+      option.textContent = `${name.replace(/_/g, ' ')} (${total.toLocaleString()})`
+      node.append(option)
+    }
+  }
+
+  fillSelect(element.region, 'All regions', events.countries, events.countryCounts)
+  fillSelect(element.creature, 'All creatures', events.creatures, events.creatureCounts)
+
+  element.region.addEventListener('change', () => {
+    countryFilter = Number(element.region.value)
+    refresh()
+  })
+
+  element.creature.addEventListener('change', () => {
+    creatureFilter = Number(element.creature.value)
+    refresh()
+  })
+
+  // --- clicking a marker ------------------------------------------------
+
+  const worldPoint = new Vector3()
+  const projected = new Vector3()
+
+  // Walks the events currently on screen and finds the one nearest the
+  // click. Markers are drawn from a single buffer with no identity of their
+  // own, so there is nothing for the renderer to report back; projecting the
+  // visible set is both simpler than colour-picking and fast enough, since it
+  // only happens on a click.
+  function pick(clientX, clientY) {
+    const box = canvas.getBoundingClientRect()
+    const halfWidth = box.width / 2
+    const halfHeight = box.height / 2
+
+    let best = -1
+    let bestDistance = PICK_RADIUS * PICK_RADIUS
+
+    for (let i = 0; i < visible; i++) {
+      const at = selection[i]
+      pointOnSphere(events.lon[at], events.lat[at], GLOBE_RADIUS, worldPoint)
+      worldPoint.applyMatrix4(globe.object.matrixWorld)
+
+      // Anything on the far side is hidden by the globe, so it cannot be
+      // what was clicked even if it lands near the pointer.
+      if (worldPoint.dot(camera.position) - worldPoint.lengthSq() < 0) continue
+
+      projected.copy(worldPoint).project(camera)
+      const x = box.left + (projected.x + 1) * halfWidth
+      const y = box.top + (1 - projected.y) * halfHeight
+
+      const distance = (x - clientX) ** 2 + (y - clientY) ** 2
+      if (distance < bestDistance) {
+        bestDistance = distance
+        best = at
+      }
+    }
+
+    return best
+  }
+
+  function hideDetail() {
+    element.detail.hidden = true
+  }
+
+  async function showDetail(index) {
+    const category = events.categories[events.category[index]].replace(/_/g, ' ')
+    const creature = events.creatures[events.creature[index]]
+
+    element.detail.hidden = false
+    element.detailKind.textContent = creature ? `${category} · ${creature}` : category
+    element.detailTitle.textContent = 'Loading…'
+    element.detailWhere.textContent = label(events.day[index])
+    element.detailBody.textContent = ''
+
+    try {
+      const detail = await events.detail(index)
+      if (!detail) return
+      element.detailTitle.textContent = detail.name || '(untitled report)'
+      element.detailWhere.textContent = [label(events.day[index]), detail.location]
+        .filter(Boolean)
+        .join(' · ')
+      element.detailBody.textContent = detail.description || ''
+    } catch {
+      element.detailTitle.textContent = 'Could not load this report'
+    }
+
+    onChange()
+  }
+
+  element.detailClose.addEventListener('click', hideDetail)
+
+  // A drag that turns the globe should not also count as a click on it.
+  let pressAt = null
+  canvas.addEventListener('pointerdown', (event) => {
+    pressAt = { x: event.clientX, y: event.clientY }
+  })
+  canvas.addEventListener('pointerup', (event) => {
+    if (!pressAt) return
+    const moved = Math.hypot(event.clientX - pressAt.x, event.clientY - pressAt.y)
+    pressAt = null
+    if (moved > 4) return
+
+    const index = pick(event.clientX, event.clientY)
+    if (index >= 0) showDetail(index)
+    else hideDetail()
   })
 
   buildChips()

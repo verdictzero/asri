@@ -13,6 +13,12 @@
         <div class="row row--filters">
           <div class="chips" id="categories"></div>
           <div class="row__end">
+            <label class="field">Region
+              <select id="region"></select>
+            </label>
+            <label class="field">Creature
+              <select id="creature"></select>
+            </label>
             <button type="button" class="chip chip--plain" id="select-all">All</button>
             <button type="button" class="chip chip--plain" id="select-none">None</button>
             <button type="button" class="chip" id="heatmap" aria-pressed="false">Heatmap</button>
@@ -45,6 +51,14 @@
         height="266"
       />
     </div>
+
+    <aside class="detail" id="detail" hidden>
+      <button type="button" class="detail__close" id="detail-close" aria-label="Close">&times;</button>
+      <p class="detail__kind" id="detail-kind"></p>
+      <h2 class="detail__title" id="detail-title"></h2>
+      <p class="detail__where" id="detail-where"></p>
+      <p class="detail__body" id="detail-body"></p>
+    </aside>
 
     <script type="module" src="/src/main.js"></script>
   </body>

@@ -62,6 +62,26 @@ one is 12.9 bits per event.
 Like the boundaries, the generated file is committed and only needs rebuilding
 when the source data or the reduction changes.
 
+## Derived fields
+
+Three things the map filters on are not columns in the CSV.
+
+**Abductions.** Reports describing being taken sit under `ufo_uap` and
+`alien_encounter` alongside reports of seeing a light. Any whose title or
+description matches `abduct` becomes `alien_abduction` — 127 of them. The
+word is specific enough to trust: the matches read "i was abducted" and
+"abduction out of bed", not passing mentions.
+
+**Creature type.** Everything from the BFRO is a bigfoot report by definition
+of the source, which covers 3,809 of the 3,821 cryptid records. The remaining
+twelve name their creature in the case title and are matched by keyword.
+
+**Country.** The location column cannot be trusted for this: a third of rows
+end in a state code rather than a country, across 2,394 distinct endings.
+Coordinates are tested against the country outlines instead, which places
+80,983 of 84,185 events. The rest fall just offshore, where geocoding to a
+town centroid lands in water.
+
 ## The timeline
 
 Play advances at a steady rate through the *events*, not through the
